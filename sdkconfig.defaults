@@ -1,0 +1,32 @@
+# Timing / RTOS
+CONFIG_FREERTOS_HZ=1000
+
+# Power management
+# Enable automatic light sleep when idle (tickless idle)
+# CPU sleeps during FreeRTOS idle, wakes on BLE/timer/GPIO events
+CONFIG_PM_ENABLE=y
+CONFIG_PM_DFS_INIT_AUTO=n
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3
+
+
+
+# Logging - ERROR only for production (less UART traffic, better radio timing)
+CONFIG_LOG_DEFAULT_LEVEL_ERROR=y
+CONFIG_LOG_DEFAULT_LEVEL=1
+CONFIG_BOOTLOADER_LOG_LEVEL_ERROR=y
+CONFIG_BOOTLOADER_LOG_LEVEL=1
+# Disable verbose component logging
+CONFIG_LOG_MAXIMUM_LEVEL_ERROR=y
+CONFIG_LOG_MAXIMUM_LEVEL=1
+
+# BLE / NimBLE (explicit for reproducible defaults)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+# end of Bluetooth
+
+# Disable Brownout Detector
+CONFIG_ESP_BROWNOUT_DET=n
