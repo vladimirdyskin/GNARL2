@@ -53,6 +53,7 @@ dkms.conf
 
 # Build directories
 build/
+build/*
 .DS_Store
 esp32rfm95/.DS_Store
 esp32rfm95/components/.DS_Store
