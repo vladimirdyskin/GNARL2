@@ -11,7 +11,7 @@
 
 // Light sleep when BLE disconnected (~0.8mA vs ~20-40mA active)
 // Uncomment to enable light sleep mode
-#define BLE_SLEEP
+// #define BLE_SLEEP
 
 #ifdef CONFIG_IDF_TARGET_ESP32C6
     //=========================================================================

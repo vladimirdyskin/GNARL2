@@ -179,6 +179,17 @@ static void server_init(void) {
 }
 
 static void advertise(void) {
+	ESP_LOGI(TAG, "advertise() called");
+
+	// Stop any existing advertising first
+	int stop_err = ble_gap_adv_stop();
+	if (stop_err != 0 && stop_err != BLE_HS_EALREADY) {
+		ESP_LOGW(TAG, "ble_gap_adv_stop returned: %d", stop_err);
+	}
+
+	// Small delay to let BLE stack settle after disconnect
+	vTaskDelay(pdMS_TO_TICKS(50));
+
 	struct ble_hs_adv_fields fields;
 	memset(&fields, 0, sizeof(fields));
 
@@ -196,57 +207,59 @@ static void advertise(void) {
 	fields.num_uuids128 = 1;
 	fields.uuids128_is_complete = 1;
 
-	// Battery Service не рекламируется, но доступен при подключении через GATT
-
 	int err = ble_gap_adv_set_fields(&fields);
 	if (err) {
-		ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d - trying fallback minimal advert", err);
-		// Fallback: try minimal advertisement (flags + short name) to detect whether payload size or fields cause the failure
+		ESP_LOGE(TAG, "ble_gap_adv_set_fields failed: %d - trying fallback", err);
 		struct ble_hs_adv_fields fallback;
 		memset(&fallback, 0, sizeof(fallback));
 		fallback.flags = fields.flags;
-		const char *name = ble_svc_gap_device_name();
 		fallback.name = (uint8_t *)name;
 		fallback.name_len = strlen(name);
-		fallback.name_is_complete = 0; // mark as incomplete to reduce required space
+		fallback.name_is_complete = 0;
 		int ferr = ble_gap_adv_set_fields(&fallback);
 		if (ferr) {
 			ESP_LOGE(TAG, "fallback ble_gap_adv_set_fields failed: %d", ferr);
 			return;
 		}
-		ESP_LOGI(TAG, "fallback advertising fields applied successfully");
+		ESP_LOGI(TAG, "fallback advertising fields applied");
 	}
 
-	// Begin advertising.
 	struct ble_gap_adv_params adv;
 	memset(&adv, 0, sizeof(adv));
 	adv.conn_mode = BLE_GAP_CONN_MODE_UND;
 	adv.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-	err = ble_gap_adv_start(addr_type, 0, BLE_HS_FOREVER, &adv, handle_gap_event, 0);
-	if (err) {
-		ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", err);
+	// Retry advertising start up to 3 times
+	for (int retry = 0; retry < 3; retry++) {
+		err = ble_gap_adv_start(addr_type, 0, BLE_HS_FOREVER, &adv, handle_gap_event, 0);
+		if (err == 0) {
+			ESP_LOGI(TAG, "advertising started");
+			break;
+		}
+		if (err == BLE_HS_EALREADY) {
+			ESP_LOGI(TAG, "already advertising");
+			break;
+		}
+		ESP_LOGW(TAG, "ble_gap_adv_start failed: %d (retry %d/3)", err, retry + 1);
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
+
+	if (err != 0 && err != BLE_HS_EALREADY) {
+		ESP_LOGE(TAG, "advertising failed after retries, err=%d", err);
 		return;
 	}
 
-	ESP_LOGI(TAG, "advertising started");
-
-	// Ensure scan response contains full name and service UUIDs so scanners show the device
+	// Set scan response
 	struct ble_hs_adv_fields rsp;
 	memset(&rsp, 0, sizeof(rsp));
-	{
-		const char *name = ble_svc_gap_device_name();
-		rsp.name = (uint8_t *)name;
-		rsp.name_len = strlen(name);
-		rsp.name_is_complete = 1;
-		rsp.uuids128 = &service_uuid;
-		rsp.num_uuids128 = 1;
-		int rerr = ble_gap_adv_rsp_set_fields(&rsp);
-		if (rerr) {
-			ESP_LOGW(TAG, "ble_gap_adv_rsp_set_fields failed: %d", rerr);
-		} else {
-			ESP_LOGI(TAG, "scan response set");
-		}
+	rsp.name = (uint8_t *)name;
+	rsp.name_len = strlen(name);
+	rsp.name_is_complete = 1;
+	rsp.uuids128 = &service_uuid;
+	rsp.num_uuids128 = 1;
+	int rerr = ble_gap_adv_rsp_set_fields(&rsp);
+	if (rerr) {
+		ESP_LOGW(TAG, "ble_gap_adv_rsp_set_fields failed: %d", rerr);
 	}
 }
 
@@ -268,15 +281,14 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		ESP_LOGD(TAG, "response count notify handle %04X", response_count_notify_handle);
 		ESP_LOGD(TAG, "timer tick notify handle %04X", timer_tick_notify_handle);
 		
-		// Update connection parameters for power saving and reliability
-		// - interval 30-50ms: longer intervals = less radio activity = lower power
-		// - latency 4: can skip up to 4 events when no data = up to 200ms sleep between wakeups
-		// - supervision_timeout 30s: prevents disconnect during long radio operations
+		// Update connection parameters for reliability with iAPS/Loop
+		// BLE spec requires: supervision_timeout > (1 + latency) * interval_max * 2
+		// With latency=0, interval=40: timeout > 80 (800ms minimum)
 		struct ble_gap_upd_params conn_params = {
-			.itvl_min = 24,   // 30ms (24 * 1.25ms)
-			.itvl_max = 40,   // 50ms (40 * 1.25ms)
-			.latency = 4,     // skip up to 4 events when idle
-			.supervision_timeout = 3000,  // 30000ms = 3000 * 10ms units
+			.itvl_min = 12,   // 15ms (12 * 1.25ms) - faster response
+			.itvl_max = 24,   // 30ms (24 * 1.25ms)
+			.latency = 0,     // no skipping - always respond
+			.supervision_timeout = 600,  // 6000ms = 6 seconds
 			.min_ce_len = 0,
 			.max_ce_len = 0,
 		};
@@ -284,7 +296,7 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		if (err != 0) {
 			ESP_LOGW(TAG, "ble_gap_update_params failed: %d", err);
 		} else {
-			ESP_LOGI(TAG, "BLE params: itvl=30-50ms latency=4 timeout=30s");
+			ESP_LOGI(TAG, "BLE params: itvl=15-30ms latency=0 timeout=6s");
 		}
 		break;
 	case BLE_GAP_EVENT_DISCONNECT:
@@ -358,7 +370,6 @@ static void sync_callback(void) {
 
 	// Mark BLE as ready - safe to use light sleep now
 	ble_ready = true;
-	ESP_LOGI(TAG, "BLE ready, light sleep enabled");
 }
 
 static uint8_t data_in[MAX_DATA];

@@ -16,13 +16,7 @@
 #include "pump_config.h"
 // #define PUMP_FREQUENCY 868250000
 
-// Uncomment to run Sniffer mode instead of normal application
-// #define RUN_SNIFFER
 
-#ifdef RUN_SNIFFER
-#define SNIFFER_TIMEOUT 600
-static uint8_t sniffer_rx_buf[256];
-#endif
 
 void app_main(void) {
 #ifndef CONFIG_IDF_TARGET_ESP32C6
@@ -45,27 +39,6 @@ void app_main(void) {
 	// Must be called once before rfm95_init()
 	ESP_ERROR_CHECK(gpio_install_isr_service(0));
 
-#ifdef RUN_SNIFFER
-    ESP_LOGI(TAG, "Starting Sniffer Mode");
-    rfm95_init();
-	uint8_t v = read_version();
-	printf("radio version %d.%d\n", version_major(v), version_minor(v));
-	set_frequency(PUMP_FREQUENCY);
-	printf("frequency set to %lu Hz\n", read_frequency());
-	for (;;) {
-		int n = sleep_receive(sniffer_rx_buf, sizeof(sniffer_rx_buf), SNIFFER_TIMEOUT);
-		if (n == 0) {
-			// printf("[timeout]\n");
-			continue;
-		}
-		for (int i = 0; i < n; i++) {
-			printf("%02X ", sniffer_rx_buf[i]);
-		}
-		printf("(RSSI = %d, # bytes = %d, count = %d)\n", read_rssi(), n, rx_packet_count());
-		vTaskDelay(pdMS_TO_TICKS(10)); // Yield to allow IDLE task to reset WDT
-	}
-#else
-	
 	// Initialize LED GPIO and task
 	led_init();
 	// Load saved LED mode from NVS (or use default AUTO)
@@ -91,5 +64,4 @@ void app_main(void) {
 	
 	adc_init();
 	gnarl_init();
-#endif
 }
